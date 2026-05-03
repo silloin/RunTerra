@@ -24,7 +24,10 @@ class EmailFallbackService {
         auth: {
           user: account.user,
           pass: account.pass
-        }
+        },
+        connectionTimeout: 15000, // 15 seconds connection timeout
+        greetingTimeout: 10000,   // 10 seconds greeting timeout
+        socketTimeout: 15000     // 15 seconds socket timeout
       });
 
       console.log('Email test URLs: https://ethereal.email/messages');

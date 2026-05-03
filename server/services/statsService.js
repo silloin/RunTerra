@@ -23,23 +23,33 @@ async getBasicStats(userId) {
         u.id,
         u.username,
         COALESCE((SELECT SUM(distance) FROM runs WHERE user_id = u.id), 0) as total_distance,
-        COALESCE(u.total_tiles, 0) as total_tiles,
+        COALESCE((SELECT COUNT(*) FROM captured_tiles WHERE user_id = u.id), 0) as total_tiles,
         COALESCE(u.weekly_mileage, 0) as weekly_mileage,
         COALESCE(u.xp, 0) as xp,
         COALESCE(u.level, 1) as level,
         COALESCE(u.streak, 0) as streak,
         COALESCE(u.territory_points, 0) as territory_points,
         COALESCE(u.total_territory_area, 0) as total_territory_area,
-        COALESCE(u.territories_captured, 0) as territories_captured,
+        COALESCE((SELECT COUNT(*) FROM captured_tiles WHERE user_id = u.id), 0) as territories_captured,
         COUNT(DISTINCT ua.achievement_id) as achievements_unlocked
       FROM users u
       LEFT JOIN user_achievements ua ON u.id = ua.user_id
       WHERE u.id = $1
-      GROUP BY u.id, u.username, u.total_tiles, u.weekly_mileage, u.xp, u.level, u.streak, u.territory_points, u.total_territory_area, u.territories_captured
+      GROUP BY u.id, u.username, u.weekly_mileage, u.xp, u.level, u.streak, u.territory_points, u.total_territory_area
     `;
     
     const result = await pool.query(query, [userId]);
     let stats = result.rows[0] || this.getDefaultStats();
+    
+    // Debug logging for tiles
+    const tilesDebug = await pool.query('SELECT COUNT(*) as count FROM captured_tiles WHERE user_id = $1', [userId]);
+    console.log(`🔍 DEBUG: User ${userId} has ${tilesDebug.rows[0].count} captured tiles`);
+    
+    // Ensure total_tiles and territories_captured are consistent
+    const tileCount = parseInt(tilesDebug.rows[0].count) || 0;
+    stats.total_tiles = tileCount;
+    stats.territories_captured = tileCount;
+    
     // Ensure all fields exist even if NULL from DB
     return {
       ...this.getDefaultStats(),

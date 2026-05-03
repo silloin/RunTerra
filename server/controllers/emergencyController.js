@@ -4,7 +4,8 @@ const firebasePush = require('../utils/firebasePush');
 const nodemailer = require('nodemailer');
 const axios = require('axios');
 const emailFallbackService = require('../services/emailFallbackService');
-const centralizedEmailService = require('../services/emailService'); // New centralized email service
+const productionEmailService = require('../services/productionEmailService'); // Production-ready email service
+const emailLocalFallback = require('../services/emailLocalFallback'); // Local logging fallback
 
 // Initialize Twilio (if credentials exist)
 let twilioClient;
@@ -25,9 +26,9 @@ if (textLocalConfig.enabled) {
   console.log('⚠️  TextLocal SMS not configured - set TEXTLOCAL_API_KEY in .env');
 }
 
-// Initialize email service (use centralized service only)
-if (!centralizedEmailService.initialized) {
-  centralizedEmailService.initialize();
+// Initialize production email service
+if (!productionEmailService.initialized) {
+  productionEmailService.initialize();
 }
 
 // @route   GET api/emergency/contacts
@@ -187,7 +188,7 @@ exports.sendSOSAlert = async (req, res) => {
     const smsResults = [];
 
     // Send Email Alerts (if configured) - FIRE AND FORGET (non-blocking)
-    if (centralizedEmailService.transporter) {
+    if (productionEmailService.transporter) {
       console.log(`📧 Queuing email alerts to ${contactsResult.rows.filter(c => c.email).length} contacts (non-blocking)...`);
       
       // Fire emails in background without waiting
@@ -199,8 +200,8 @@ exports.sendSOSAlert = async (req, res) => {
             try {
               console.log(`📤 Sending email to ${contact.contact_name} (${contact.email})...`);
               
-              // Use centralized email service with forwarding
-              const emailResult = await centralizedEmailService.sendSOSEmail({
+              // Use production email service with multiple provider fallbacks
+              const emailResult = await productionEmailService.sendSOSEmail({
                 to: contact.email,
                 userName: user.username,
                 location: `${latitude}, ${longitude}`,
@@ -221,10 +222,11 @@ exports.sendSOSAlert = async (req, res) => {
                 throw new Error(emailResult.reason);
               }
             } catch (err) {
-              console.warn(`Gmail email failed for ${contact.contact_name}, trying fallback:`, err.message);
+              console.warn(`Production email service failed for ${contact.contact_name}, trying fallback:`, err.message);
               // Try fallback email service
               try {
-                const fallbackResult = await emailFallbackService.sendSOSEmail(contact, user, location);
+                const locationObj = { lat: latitude, lng: longitude };
+                const fallbackResult = await emailFallbackService.sendSOSEmail(contact, user, locationObj);
                 if (fallbackResult.success) {
                   console.log(`Fallback email sent to ${contact.contact_name}`);
                   emailResults.push({ contact: contact.contact_name, email: contact.email, status: 'sent-fallback', messageId: fallbackResult.messageId });
@@ -233,7 +235,19 @@ exports.sendSOSAlert = async (req, res) => {
                 }
               } catch (fallbackErr) {
                 console.warn(`Fallback email also failed for ${contact.contact_name}:`, fallbackErr.message);
-                emailResults.push({ contact: contact.contact_name, email: contact.email, status: 'failed', error: 'All email services failed' });
+                // Try local logging as final fallback
+                try {
+                  const localResult = await emailLocalFallback.sendSOSEmail(contact, user, locationObj);
+                  if (localResult.success) {
+                    console.log(`Email logged locally for ${contact.contact_name}`);
+                    emailResults.push({ contact: contact.contact_name, email: contact.email, status: 'logged-locally', messageId: localResult.messageId });
+                  } else {
+                    emailResults.push({ contact: contact.contact_name, email: contact.email, status: 'failed', error: 'All email services failed' });
+                  }
+                } catch (localErr) {
+                  console.warn(`Local email logging also failed for ${contact.contact_name}:`, localErr.message);
+                  emailResults.push({ contact: contact.contact_name, email: contact.email, status: 'failed', error: 'All email services failed' });
+                }
               }
             }
           }

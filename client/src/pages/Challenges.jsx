@@ -1,9 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useContext } from 'react';
 import { motion } from 'framer-motion';
 import { Trophy, Flame, Map, Clock, Target, Rocket } from 'lucide-react';
 import Card from '../components/ui/Card';
+import { AuthContext } from '../context/AuthContext';
+import axios from 'axios';
 
-const CHALLENGES = [
+const CHALLENGES_CONFIG = [
   {
     id: 'marathoner',
     title: 'The Marathoner',
@@ -11,9 +13,9 @@ const CHALLENGES = [
     icon: <Target className="text-red-500" size={32} />,
     reward: '500 XP & Marathon Badge',
     difficulty: 'Hard',
-    progress: 15, // Example mocked progress
     target: 42.2,
-    unit: 'km'
+    unit: 'km',
+    getProgress: (stats, weeklyStats) => weeklyStats?.distance_this_week / 1000 || 0
   },
   {
     id: 'speed_demon',
@@ -22,9 +24,9 @@ const CHALLENGES = [
     icon: <Flame className="text-orange-500" size={32} />,
     reward: '350 XP & Flame Badge',
     difficulty: 'Extreme',
-    progress: 0,
     target: 1,
-    unit: 'run'
+    unit: 'run',
+    getProgress: (stats) => 0 // TODO: Implement based on runs with pace < 4:30
   },
   {
     id: 'tile_king',
@@ -33,9 +35,9 @@ const CHALLENGES = [
     icon: <Map className="text-purple-500" size={32} />,
     reward: '400 XP & Crown Badge',
     difficulty: 'Medium',
-    progress: 6,
     target: 15,
-    unit: 'tiles'
+    unit: 'tiles',
+    getProgress: (stats) => 0 // TODO: Implement based on daily tile captures
   },
   {
     id: 'consistency',
@@ -44,18 +46,65 @@ const CHALLENGES = [
     icon: <Clock className="text-blue-500" size={32} />,
     reward: '600 XP & Iron Tracker',
     difficulty: 'Hard',
-    progress: 3,
     target: 7,
-    unit: 'days'
+    unit: 'days',
+    getProgress: (stats) => stats?.streak || 0
   }
 ];
 
 const Challenges = () => {
+  const { user } = useContext(AuthContext);
   const [activeChallenge, setActiveChallenge] = useState('marathoner');
+  const [stats, setStats] = useState(null);
+  const [weeklyStats, setWeeklyStats] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchChallengeData = async () => {
+      if (!user?.id) {
+        setLoading(false);
+        return;
+      }
+
+      try {
+        const [statsRes, weeklyRes] = await Promise.all([
+          axios.get(`/users/stats/${user.id}`),
+          axios.get(`/users/weekly-stats/${user.id}`)
+        ]);
+        
+        setStats(statsRes.data);
+        setWeeklyStats(weeklyRes.data);
+      } catch (error) {
+        console.error('Error fetching challenge data:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchChallengeData();
+  }, [user?.id]);
+
+  // Calculate dynamic challenges based on user data
+  const challenges = CHALLENGES_CONFIG.map(challenge => ({
+    ...challenge,
+    progress: challenge.getProgress(stats, weeklyStats)
+  }));
 
   const handleActivate = (id) => {
     setActiveChallenge(id);
   };
+
+  if (loading) {
+    return (
+      <div className="p-4 sm:p-6 lg:p-8 bg-gray-900 min-h-screen text-white flex items-center justify-center">
+        <div className="animate-pulse text-center">
+          <Trophy className="text-orange-500 mx-auto mb-4" size={48} />
+          <div className="h-8 bg-gray-700 rounded w-64 mx-auto mb-2"></div>
+          <div className="h-4 bg-gray-700 rounded w-48 mx-auto"></div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="p-4 sm:p-6 lg:p-8 bg-gray-900 min-h-screen text-white page-enter">
@@ -75,7 +124,7 @@ const Challenges = () => {
         </header>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {CHALLENGES.map((challenge, idx) => {
+          {challenges.map((challenge, idx) => {
             const isActive = activeChallenge === challenge.id;
             const progressPercent = Math.min((challenge.progress / challenge.target) * 100, 100);
 

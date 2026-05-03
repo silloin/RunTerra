@@ -33,6 +33,7 @@ const Home = () => {
   const [recentRuns, setRecentRuns] = useState([]);
   const [weather, setWeather] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [geoError, setGeoError] = useState(null);
 
   const safeRuns = Array.isArray(recentRuns) ? recentRuns : [];
 
@@ -81,67 +82,96 @@ const Home = () => {
   };
 
   useEffect(() => {
-  const fetchHomeData = async () => {
-    try {
-      if (!user?.id) {
-        setStats(null);
+    const fetchHomeData = async () => {
+      try {
+        if (!user?.id) {
+          setStats(null);
+          setLoading(false);
+          return;
+        }
+        const [statsRes, runsRes] = await Promise.all([
+          axios.get(`/users/stats/${user.id}`),
+          axios.get('/runs?limit=3')
+        ]);
+        setStats(statsRes.data);
+        const runs = runsRes.data;
+        setRecentRuns(Array.isArray(runs) ? runs : (Array.isArray(runs?.runs) ? runs.runs : Array.isArray(runs?.data) ? runs.data : []));
+        
+        // Fetch weather using geolocation with robust error handling
+        fetchWeatherWithFallback();
+      } catch (error) {
+        console.error('Error fetching home data:', error);
+        setRecentRuns([]);
+      } finally {
         setLoading(false);
+      }
+    };
+
+    const fetchWeatherWithFallback = () => {
+      if (!navigator.geolocation) {
+        console.warn('Geolocation not supported by this browser');
+        setGeoError('Geolocation not supported');
+        fetchDefaultWeather();
         return;
       }
-      const [statsRes, runsRes] = await Promise.all([
-        axios.get(`/users/stats/${user.id}`),
-        axios.get('/runs?limit=3')
-      ]);
-      setStats(statsRes.data);
-      const runs = runsRes.data;
-      setRecentRuns(Array.isArray(runs) ? runs : (Array.isArray(runs?.runs) ? runs.runs : Array.isArray(runs?.data) ? runs.data : []));
-      
-      // Fetch weather using geolocation
-      if (navigator.geolocation) {
-        navigator.geolocation.getCurrentPosition(
-          async (position) => {
-            try {
-              const weatherRes = await axios.get('/users/weather', {
-                params: {
-                  lat: position.coords.latitude,
-                  lng: position.coords.longitude
-                }
-              });
-              setWeather(weatherRes.data);
-            } catch (err) {
-              console.error('Error fetching weather:', err);
-            }
-          },
-          (error) => {
-            console.error('Geolocation error:', error);
-            // Use default location (Dubai) if geolocation fails
+
+      navigator.geolocation.getCurrentPosition(
+        async (position) => {
+          setGeoError(null);
+          try {
+            const weatherRes = await axios.get('/users/weather', {
+              params: {
+                lat: position.coords.latitude,
+                lng: position.coords.longitude
+              }
+            });
+            setWeather(weatherRes.data);
+          } catch (err) {
+            console.error('Error fetching weather:', err);
             fetchDefaultWeather();
           }
-        );
-      } else {
-        fetchDefaultWeather();
-      }
-    } catch (error) {
-      console.error('Error fetching home data:', error);
-      setRecentRuns([]);
-    } finally {
-      setLoading(false);
-    }
-  };
+        },
+        (error) => {
+          // Handle specific geolocation errors
+          let errorMessage = 'Location unavailable';
+          switch(error.code) {
+            case error.PERMISSION_DENIED:
+              errorMessage = 'Location permission denied. Using default location.';
+              break;
+            case error.POSITION_UNAVAILABLE:
+              errorMessage = 'Location information unavailable. Using default location.';
+              break;
+            case error.TIMEOUT:
+              errorMessage = 'Location request timed out. Using default location.';
+              break;
+            default:
+              errorMessage = 'An unknown error occurred. Using default location.';
+          }
+          console.error('Geolocation error:', errorMessage, error);
+          setGeoError(errorMessage);
+          fetchDefaultWeather();
+        },
+        {
+          enableHighAccuracy: false,
+          timeout: 10000,
+          maximumAge: 600000 // 10 minutes cache
+        }
+      );
+    };
 
-  const fetchDefaultWeather = async () => {
-    try {
-      const weatherRes = await axios.get('/users/weather', {
-        params: { lat: 25.2048, lng: 55.2708 } // Dubai coordinates
-      });
-      setWeather(weatherRes.data);
-    } catch (err) {
-      console.error('Error fetching default weather:', err);
-    }
-  };
+    const fetchDefaultWeather = async () => {
+      try {
+        const weatherRes = await axios.get('/users/weather', {
+          params: { lat: 25.2048, lng: 55.2708 } // Dubai coordinates
+        });
+        setWeather(weatherRes.data);
+      } catch (err) {
+        console.error('Error fetching default weather:', err);
+      }
+    };
 
     fetchHomeData();
-  }, []);
+  }, [user?.id]);
 
   if (loading) {
     return (
@@ -152,7 +182,7 @@ const Home = () => {
             <Skeleton type="text-lg" width="250px" height="36px" />
             <Skeleton type="text" width="200px" />
           </div>
-          <Skeleton type="rect" width="200px" height="56px" className="hidden md:block" />
+           <Skeleton type="rect" width="200px" height="56px" className="hidden md:block" />
         </div>
 
         {/* Quick Stats Skeleton */}
@@ -235,7 +265,7 @@ const Home = () => {
       >
         {[
           { label: 'Total Distance', value: `${Number(stats?.total_distance || 0).toFixed(2)} km`, icon: <TrendingUp className="text-orange-400" />, color: 'from-orange-500/10 to-red-500/10', border: 'border-orange-500/30' },
-          { label: 'Tiles Owned', value: stats?.total_tiles || 0, icon: <MapIcon className="text-red-400" />, color: 'from-red-500/10 to-orange-500/10', border: 'border-red-500/30' },
+          { label: 'Tiles Owned', value: stats?.total_tiles ?? stats?.territories_captured ?? 0, icon: <MapIcon className="text-red-400" />, color: 'from-red-500/10 to-orange-500/10', border: 'border-red-500/30' },
           { label: 'Level', value: stats?.level || user?.level || 1, icon: <Award className="text-orange-400" />, color: 'from-orange-500/10 to-red-500/10', border: 'border-orange-500/30' },
           { label: 'XP Points', value: stats?.xp || user?.xp || 0, icon: <Zap className="text-red-400" />, color: 'from-red-500/10 to-orange-500/10', border: 'border-red-500/30' },
         ].map((stat, idx) => (
@@ -312,6 +342,9 @@ const Home = () => {
               {!weather ? (
                 <div className="text-center py-8">
                   <p className="text-gray-400">Loading weather...</p>
+                  {geoError && (
+                    <p className="text-xs text-yellow-500 mt-2">{geoError}</p>
+                  )}
                 </div>
               ) : (
               <div className="space-y-4">
@@ -500,3 +533,4 @@ const Home = () => {
 };
 
 export default Home;
+

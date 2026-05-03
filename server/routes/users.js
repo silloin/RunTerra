@@ -128,7 +128,6 @@ router.get('/stats/:userId', auth, async (req, res) => {
         }
       } catch (cacheError) {
         console.warn('⚠️ Redis cache error, fetching from database:', cacheError.message);
-        // Continue to fetch from database
       }
     }
 
@@ -154,6 +153,49 @@ router.get('/stats/:userId', auth, async (req, res) => {
       message: error.message,
       detail: error.detail,
       hint: error.hint
+    });
+  }
+});
+
+// @route   GET api/users/weekly-stats/:userId
+// @desc    Get user weekly statistics
+// @access  Private
+router.get('/weekly-stats/:userId', auth, async (req, res) => {
+  const userId = req.params.userId;
+  const cacheKey = `weekly_stats:${userId}`;
+
+  try {
+    // Try to get from Redis cache (skip if Redis not available)
+    if (isRedisAvailable() && redisClient) {
+      try {
+        const cachedStats = await redisClient.get(cacheKey);
+        if (cachedStats) {
+          return res.json(JSON.parse(cachedStats));
+        }
+      } catch (cacheError) {
+        console.warn('⚠️ Redis cache error, fetching from database:', cacheError.message);
+      }
+    }
+
+    const weeklyStats = await statsService.getWeeklyStats(userId);
+
+    // Cache in Redis for 30 seconds (skip if not available)
+    if (isRedisAvailable() && redisClient) {
+      try {
+        await redisClient.setEx(cacheKey, 30, JSON.stringify(weeklyStats));
+      } catch (cacheError) {
+        console.warn('⚠️ Redis cache set error:', cacheError.message);
+      }
+    }
+
+    res.json(weeklyStats);
+  } catch (error) {
+    console.error('❌ WEEKLY STATS API ERROR');
+    console.error('UserId:', userId);
+    console.error('Error:', error.message);
+    res.status(500).json({ 
+      error: 'Failed to fetch weekly stats', 
+      message: error.message
     });
   }
 });

@@ -105,6 +105,7 @@ const createSecureStorage = (uploadDir) => {
       const resolvedPath = path.resolve(uploadDir);
       const expectedBase = path.resolve(__dirname, '..', 'public', 'uploads');
       
+      // Allow subdirectories under public/uploads (e.g., profiles, runs, gpx)
       if (!resolvedPath.startsWith(expectedBase)) {
         return cb(new Error('Invalid upload directory'), false);
       }

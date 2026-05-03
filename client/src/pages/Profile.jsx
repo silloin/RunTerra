@@ -8,11 +8,11 @@ import { useTranslation } from 'react-i18next';
 
 const Profile = () => {
   const { t } = useTranslation();
-  const { user, logout, updateProfile, updateProfilePhoto, uploadProfilePhoto } = useContext(AuthContext);
+  const { user, loading: authLoading, logout, updateProfile, updateProfilePhoto, uploadProfilePhoto } = useContext(AuthContext);
   const [isEditing, setIsEditing] = useState(false);
   const [editData, setEditData] = useState({
-    username: user?.username || '',
-    city: user?.city || ''
+    username: '',
+    city: ''
   });
   const [photoUrl, setPhotoUrl] = useState('');
   const [selectedFile, setSelectedFile] = useState(null);
@@ -33,6 +33,16 @@ const Profile = () => {
     email: '',
     contactType: 'friend'
   });
+
+  // Sync editData with user context when user loads (hydration fix)
+  useEffect(() => {
+    if (user) {
+      setEditData({
+        username: user.username || '',
+        city: user.city || ''
+      });
+    }
+  }, [user]);
 
   useEffect(() => {
     if (user) {
@@ -131,7 +141,7 @@ const Profile = () => {
 
   const handleCancelEdit = () => {
     setIsEditing(false);
-    setEditData({ username: '', city: '' });
+    setEditData({ username: user?.username || '', city: user?.city || '' });
     setError('');
   };
 
@@ -161,7 +171,6 @@ const Profile = () => {
       if (selectedFile) {
         const result = await uploadProfilePhoto(selectedFile);
         console.log('✅ Photo uploaded successfully:', result.profilePhotoUrl);
-        console.log('🖼️ User object after upload:', user);
         setSuccess('Profile photo uploaded successfully! 📸');
       } else if (photoUrl.trim()) {
         // Otherwise use URL
@@ -220,6 +229,19 @@ const Profile = () => {
     { name: 'Marathoner', icon: Target, description: 'Total distance > 42.2km', achieved: (user?.total_distance || 0) >= 42.2 },
     { name: 'Explorer', icon: Award, description: 'Capture tiles in 3 different cities', achieved: false },
   ];
+
+  // Loading state while auth is initializing or user data is not available
+  if (authLoading || !user) {
+    return (
+      <div className="p-4 sm:p-8 pb-24 sm:pb-8 bg-gray-900 min-h-screen text-white flex items-center justify-center">
+        <div className="animate-pulse text-center">
+          <div className="w-24 h-24 bg-gray-700 rounded-full mx-auto mb-4"></div>
+          <div className="h-6 bg-gray-700 rounded w-48 mx-auto mb-2"></div>
+          <div className="h-4 bg-gray-700 rounded w-32 mx-auto"></div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="p-4 sm:p-8 pb-24 sm:pb-8 bg-gray-900 min-h-screen text-white">
@@ -293,7 +315,7 @@ const Profile = () => {
                     className="bg-gray-700 px-3 py-2 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-600"
                   />
                 ) : (
-                  user?.username
+                  user?.username || 'Loading...'
                 )}
               </h1>
               {!isEditing && (
@@ -492,7 +514,7 @@ const Profile = () => {
                 if (isAddingContact) {
                   setIsAddingContact(false);
                   setEditingContactId(null);
-                  setNewContact({ name: '', phone: '', email: '' });
+                  setNewContact({ contactName: '', phoneNumber: '', email: '', contactType: 'friend' });
                 } else {
                   setIsAddingContact(true);
                 }
@@ -630,3 +652,4 @@ const Profile = () => {
 };
 
 export default Profile;
+

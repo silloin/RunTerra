@@ -32,7 +32,10 @@ class EmailService {
         auth: {
           user: 'resend',
           pass: resendApiKey
-        }
+        },
+        connectionTimeout: 10000, // 10 seconds connection timeout
+        greetingTimeout: 5000,   // 5 seconds greeting timeout
+        socketTimeout: 10000     // 10 seconds socket timeout
       });
       console.log('✅ Resend Email Service initialized');
       this.initialized = true;
@@ -42,15 +45,25 @@ class EmailService {
       console.log('RESEND_API_KEY:', resendApiKey ? 'SET' : 'NOT SET');
     }
 
-    // Verify connection (non-blocking)
+    // Verify connection (non-blocking) with retry logic
     if (this.transporter) {
-      this.transporter.verify((error, success) => {
-        if (error) {
-          console.warn(`⚠️  Email verification failed: ${error.message}`);
-        } else {
-          console.log('✅ Email service verified successfully');
-        }
-      });
+      const verifyWithRetry = (attempt = 1) => {
+        this.transporter.verify((error, success) => {
+          if (error) {
+            console.warn(`⚠️  Email verification failed (attempt ${attempt}): ${error.message}`);
+            if (attempt < 3) {
+              console.log(`🔄 Retrying email verification in 5 seconds...`);
+              setTimeout(() => verifyWithRetry(attempt + 1), 5000);
+            } else {
+              console.log('📧 Emails will attempt to send on-demand (SOS alerts, etc.)');
+              console.log('📝 Failed emails will be logged locally as fallback');
+            }
+          } else {
+            console.log('✅ Email service verified successfully');
+          }
+        });
+      };
+      verifyWithRetry();
     }
   }
 

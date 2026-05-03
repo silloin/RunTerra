@@ -224,7 +224,15 @@ const MapboxMap = () => {
         },
         (error) => {
           setLocationLoading(false);
-          alert('Unable to get your location. Please enable location services.');
+          let errorMessage = 'Unable to get your location.';
+          if (error.code === 1) {
+            errorMessage = 'Location permission denied. Please enable location in settings.';
+          } else if (error.code === 2) {
+            errorMessage = 'Location service unavailable. Please check your device settings.';
+          } else if (error.code === 3) {
+            errorMessage = 'Location request timed out. Please try again.';
+          }
+          alert(errorMessage);
         },
         {
           enableHighAccuracy: true,
@@ -240,6 +248,8 @@ const MapboxMap = () => {
   const [mapStyleMode, setMapStyleMode] = useState(0); // 0: Dark, 1: Satellite, 2: Streets+Heatmap
   const [selectedUser, setSelectedUser] = useState(null);
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
+
+  const [isFollowingUser, setIsFollowingUser] = useState(true);
   
   // Run tracking state - lifted up to persist when panel is hidden
   const [isTracking, setIsTracking] = useState(false);
@@ -257,6 +267,16 @@ const MapboxMap = () => {
   const [currentLocation, setCurrentLocation] = useState(null);
 
   useEffect(() => {
+    if (map.current && currentLocation && isFollowingUser && isRunActive) {
+      map.current.flyTo({
+        center: currentLocation,
+        zoom: 16,
+        duration: 1000
+      });
+    }
+  }, [currentLocation, isFollowingUser, isRunActive]);
+
+  useEffect(() => {
     if (map.current) return;
 
     setLocationLoading(true);
@@ -269,9 +289,17 @@ const MapboxMap = () => {
         setLocationLoading(false);
       },
       (error) => {
-        console.warn('GPS error:', error);
+        let errorMessage = 'GPS unavailable. Using default location.';
+        if (error.code === 1) {
+          errorMessage = 'Location permission denied. Using default location.';
+        } else if (error.code === 2) {
+          errorMessage = 'Location unavailable. Using default location.';
+        } else if (error.code === 3) {
+          errorMessage = 'Location request timeout. Using default location.';
+        }
+        console.warn('Geolocation error:', errorMessage, error.message);
         setLocationLoading(false);
-        setLocationError('GPS unavailable. Using default location.');
+        setLocationError(errorMessage);
         const fallback = [55.2708, 25.2048];
         setCenter(fallback);
         setCurrentLocation(fallback);
@@ -296,6 +324,10 @@ const MapboxMap = () => {
     });
 
     map.current.addControl(new mapboxgl.NavigationControl(), 'top-right');
+
+    map.current.on('dragstart', () => setIsFollowingUser(false));
+    map.current.on('zoomstart', () => setIsFollowingUser(false));
+    map.current.on('touchstart', () => setIsFollowingUser(false));
 
     map.current.on('load', () => {
       fetchTiles();
@@ -735,8 +767,17 @@ const MapboxMap = () => {
           if (map.current) map.current.flyTo({ center: coords, duration: 1000 });
           setLocationError(null);
         },
-        () => {
-          setLocationError('Location denied - using Dubai fallback');
+        (error) => {
+          let errorMessage = 'Location service error';
+          if (error.code === 1) {
+            errorMessage = 'Location permission denied';
+          } else if (error.code === 2) {
+            errorMessage = 'Location service unavailable';
+          } else if (error.code === 3) {
+            errorMessage = 'Location request timeout';
+          }
+          console.warn('Watch position error:', errorMessage, error.message);
+          setLocationError(errorMessage);
         },
         { enableHighAccuracy: true, maximumAge: 10000, timeout: 10000 }
       );
@@ -1154,24 +1195,42 @@ const MapboxMap = () => {
   };
 
   const triggerSOS = async () => {
-    if (!navigator.geolocation) return;
-    navigator.geolocation.getCurrentPosition(async (position) => {
-      try {
-        const { latitude, longitude } = position.coords;
-        const token = localStorage.getItem('token');
-        await axios.post('/emergency/send-sos', { 
-          latitude, 
-          longitude,
-          message: '🚨 SOS! Emergency assistance needed!' 
-        }, {
-          headers: { 'x-auth-token': token }
-        });
-        alert('SOS ALERT SENT TO EMERGENCY CONTACTS!');
-      } catch (error) {
-        console.error('Error sending SOS:', error);
-        alert(error.response?.data?.msg || 'Failed to send SOS alert');
-      }
-    });
+    if (!navigator.geolocation) {
+      alert('Geolocation is not supported by your browser. Cannot send SOS.');
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        try {
+          const { latitude, longitude } = position.coords;
+          const token = localStorage.getItem('token');
+          await axios.post('/emergency/send-sos', { 
+            latitude, 
+            longitude,
+            message: '🚨 SOS! Emergency assistance needed!' 
+          }, {
+            headers: { 'x-auth-token': token }
+          });
+          alert('SOS ALERT SENT TO EMERGENCY CONTACTS!');
+        } catch (error) {
+          console.error('Error sending SOS:', error);
+          alert(error.response?.data?.msg || 'Failed to send SOS alert');
+        }
+      },
+      (error) => {
+        let errorMessage = 'Unable to get your location for SOS.';
+        if (error.code === 1) {
+          errorMessage = 'Location permission denied. Please enable location access in your browser settings to send SOS.';
+        } else if (error.code === 2) {
+          errorMessage = 'Location service unavailable. Please check your device settings.';
+        } else if (error.code === 3) {
+          errorMessage = 'Location request timed out. Please try again in an open area.';
+        }
+        console.error('SOS Geolocation error:', errorMessage, error.message);
+        alert(errorMessage);
+      },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+    );
   };
 
   const toggleTracking = () => {
@@ -1185,6 +1244,7 @@ const MapboxMap = () => {
   const startTracking = () => {
     console.log('▶️ Starting tracking - changing to arrow marker');
     setIsTracking(true);
+    setIsRunActive(true);
     isTrackingRef.current = true;
     setRunStats({
       duration: 0,
@@ -1423,26 +1483,7 @@ const MapboxMap = () => {
       <div className="absolute bottom-8 right-4 bg-gray-900/80 text-white px-3 py-1 rounded-lg text-xs z-10 flex items-center space-x-2 border border-gray-700">
         <div className={`w-2 h-2 rounded-full ${isSocketConnected ? 'bg-green-500' : 'bg-red-500'}`}></div>
         <span>{onlineUsers.length + 1} Runners Online</span>
-      </div>
-
-      
-
-      {/* Manual Refresh Button */}
-      <div className="absolute bottom-44 right-4 z-10">
-        <button
-          onClick={() => {
-            fetchTiles();
-            if (showHeatmap) fetchHeatmapData();
-          }}
-          className="bg-blue-600 text-white px-3 py-1 rounded-lg text-xs font-bold shadow-lg hover:bg-blue-700 transition flex items-center gap-1"
-          title="Refresh map data"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-          </svg>
-          Refresh
-        </button>
-      </div>
+      </div>  
 
       {/* Collapsible Directions Panel */}
       {showDirectionsPanel && directionsData && (
@@ -1820,6 +1861,28 @@ const MapboxMap = () => {
           </div>
           <div className="text-gray-400 text-xs">(Click to show)</div>
         </div>
+      )}
+
+      {/* Following Status Indicator */}
+      {isRunActive && (
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-gray-800 text-white text-xs px-3 py-1 rounded-full opacity-80 z-10">
+          Following: {isFollowingUser ? 'ON' : 'OFF'}
+        </div>
+      )}
+
+      {/* Recenter Button */}
+      {isRunActive && !isFollowingUser && (
+        <button
+          onClick={() => {
+            setIsFollowingUser(true);
+            if (map.current && currentLocation) {
+              map.current.flyTo({ center: currentLocation, zoom: 16, duration: 1000 });
+            }
+          }}
+          className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-blue-600 text-white px-4 py-2 rounded-full shadow-lg hover:bg-blue-700 transition-colors z-10"
+        >
+          Recenter
+        </button>
       )}
 
       {/* User Profile Modal */}

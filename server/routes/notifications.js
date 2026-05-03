@@ -25,6 +25,12 @@ router.post('/', auth, async (req, res) => {
       return res.status(400).json({ message: 'Type and title are required' });
     }
 
+    if (!notificationService) {
+      return res.status(503).json({ 
+        message: 'Notification service not available. Please try again later.' 
+      });
+    }
+
     let notification;
 
     switch (type) {
@@ -187,6 +193,18 @@ router.put('/read/:notificationId', auth, async (req, res) => {
   const notificationId = req.params.notificationId;
 
   try {
+    // Guard: if notification service is not set, use DB fallback
+    if (!notificationService) {
+      const result = await pool.query(
+        'UPDATE notifications SET is_read = TRUE WHERE id = $1 AND user_id = $2 RETURNING *',
+        [notificationId, userId]
+      );
+      if (result.rows.length === 0) {
+        return res.status(404).json({ message: 'Notification not found' });
+      }
+      return res.json({ message: 'Notification marked as read' });
+    }
+
     const success = await notificationService.markAsRead(notificationId, userId);
     
     if (!success) {
@@ -207,6 +225,18 @@ router.put('/read-all', auth, async (req, res) => {
   const userId = req.user.id;
 
   try {
+    // Guard: if notification service is not set, use DB fallback
+    if (!notificationService) {
+      const result = await pool.query(
+        'UPDATE notifications SET is_read = TRUE WHERE user_id = $1 AND is_read = FALSE RETURNING id',
+        [userId]
+      );
+      return res.json({ 
+        message: 'All notifications marked as read',
+        markedCount: result.rowCount
+      });
+    }
+
     const markedCount = await notificationService.markAllAsRead(userId);
 
     res.json({ 
@@ -227,6 +257,18 @@ router.delete('/:notificationId', auth, async (req, res) => {
   const notificationId = req.params.notificationId;
 
   try {
+    // Guard: if notification service is not set, use DB fallback
+    if (!notificationService) {
+      const result = await pool.query(
+        'DELETE FROM notifications WHERE id = $1 AND user_id = $2 RETURNING id',
+        [notificationId, userId]
+      );
+      if (result.rows.length === 0) {
+        return res.status(404).json({ message: 'Notification not found' });
+      }
+      return res.json({ message: 'Notification deleted successfully' });
+    }
+
     const success = await notificationService.deleteNotification(notificationId, userId);
 
     if (!success) {
@@ -247,6 +289,18 @@ router.get('/preferences', auth, async (req, res) => {
   const userId = req.user.id;
 
   try {
+    // Guard: if notification service is not set, return default preferences
+    if (!notificationService) {
+      return res.json({
+        user_id: userId,
+        tile_capture_alerts: true,
+        training_reminders: true,
+        friend_activity: true,
+        email_notifications: true,
+        push_notifications: true
+      });
+    }
+
     const preferences = await notificationService.getPreferences(userId);
     res.json(preferences);
   } catch (err) {
@@ -263,6 +317,15 @@ router.put('/preferences', auth, async (req, res) => {
   const preferences = req.body;
 
   try {
+    // Guard: if notification service is not set, store fallback
+    if (!notificationService) {
+      // Just return success - no persistent storage without service
+      return res.json({
+        message: 'Preferences updated (notification service unavailable)',
+        preferences: { ...preferences, user_id: userId }
+      });
+    }
+
     const updated = await notificationService.updatePreferences(userId, preferences);
     res.json({
       message: 'Preferences updated successfully',
