@@ -1,126 +1,89 @@
 /**
  * Centralized Email Service for ZoneRush
- * Forwards all emails to verified address (terra93005@gmail.com) to bypass Resend testing restriction
- * Original recipient info is preserved in the email content
+ * Uses Resend HTTP API (port 443) — no SMTP ports needed, never blocked.
+ * Forwards all emails to terra93005@gmail.com (Resend free tier restriction).
+ * Original recipient info is preserved in the email content.
  */
-
-const nodemailer = require('nodemailer');
 
 class EmailService {
   constructor() {
-    this.transporter = null;
-    this.verifiedEmail = 'terra93005@gmail.com'; // Your verified Resend email
+    this.verifiedEmail = process.env.RESEND_VERIFIED_RECIPIENT || 'terra93005@gmail.com';
     this.initialized = false;
   }
 
   /**
-   * Initialize email transporter (call this after dotenv loads)
+   * Initialize email service (validates API key exists)
    */
   initialize() {
-    if (this.initialized) {
-      return; // Already initialized
-    }
+    if (this.initialized) return;
 
-    const emailService = process.env.EMAIL_SERVICE || 'resend';
-    const resendApiKey = process.env.RESEND_API_KEY;
-
-    if (emailService === 'resend' && resendApiKey) {
-      this.transporter = nodemailer.createTransport({
-        host: 'smtp.resend.com',
-        port: 587,
-        secure: false,
-        auth: {
-          user: 'resend',
-          pass: resendApiKey
-        },
-        connectionTimeout: 10000, // 10 seconds connection timeout
-        greetingTimeout: 5000,   // 5 seconds greeting timeout
-        socketTimeout: 10000     // 10 seconds socket timeout
-      });
-      console.log('✅ Resend Email Service initialized');
-      this.initialized = true;
+    const apiKey = process.env.RESEND_API_KEY;
+    if (!apiKey) {
+      console.warn('⚠️  RESEND_API_KEY not set — email sending will be disabled');
     } else {
-      console.warn('⚠️  Email service not properly configured');
-      console.log('EMAIL_SERVICE:', emailService);
-      console.log('RESEND_API_KEY:', resendApiKey ? 'SET' : 'NOT SET');
+      console.log('✅ Email service ready (Resend HTTP API — no SMTP ports needed)');
     }
-
-    // Verify connection (non-blocking) with retry logic
-    if (this.transporter) {
-      const verifyWithRetry = (attempt = 1) => {
-        this.transporter.verify((error, success) => {
-          if (error) {
-            console.warn(`⚠️  Email verification failed (attempt ${attempt}): ${error.message}`);
-            if (attempt < 3) {
-              console.log(`🔄 Retrying email verification in 5 seconds...`);
-              setTimeout(() => verifyWithRetry(attempt + 1), 5000);
-            } else {
-              console.log('📧 Emails will attempt to send on-demand (SOS alerts, etc.)');
-              console.log('📝 Failed emails will be logged locally as fallback');
-            }
-          } else {
-            console.log('✅ Email service verified successfully');
-          }
-        });
-      };
-      verifyWithRetry();
-    }
+    this.initialized = true;
   }
 
+
   /**
-   * Send email with forwarding to verified address
-   * All emails are sent to terra93005@gmail.com with original recipient info in content
-   * 
+   * Send email via Resend HTTP API
+   * All emails are forwarded to terra93005@gmail.com (Resend free tier restriction).
+   * Original recipient is embedded in the subject + body so no info is lost.
+   *
    * @param {Object} options
-   * @param {string} options.to - Original recipient email
-   * @param {string} options.subject - Email subject
-   * @param {string} options.html - HTML content
-   * @param {string} options.text - Plain text content (optional)
-   * @param {string} options.from - Sender name/email (optional)
+   * @param {string} options.to        - Original recipient email
+   * @param {string} options.subject   - Email subject
+   * @param {string} options.html      - HTML content
+   * @param {string} options.text      - Plain text content (optional)
+   * @param {string} options.from      - Sender display name (optional)
    */
   async sendEmail(options) {
     const { to, subject, html, text, from = 'ZoneRush' } = options;
+    const apiKey = process.env.RESEND_API_KEY;
 
-    if (!this.transporter) {
-      console.warn('⚠️  Email transporter not available - logging instead');
-      console.log('📧 Email would be sent:', { to, subject });
-      return { success: false, reason: 'transporter-unavailable' };
+    if (!apiKey) {
+      console.warn('⚠️  RESEND_API_KEY not set — cannot send email to', to);
+      return { success: false, reason: 'RESEND_API_KEY not configured' };
     }
 
+    // Resend free tier can ONLY deliver to the verified signup email.
+    // Embed original recipient in subject/body so the alert is not lost.
+    const actualTo = this.verifiedEmail;
+    const redirectedSubject = `[To: ${to}] ${subject}`;
+    const redirectedHtml = `
+      <div style="background:#fff3cd;border:1px solid #ffc107;padding:10px;margin-bottom:15px;border-radius:5px;font-family:Arial,sans-serif">
+        <strong>📬 Originally addressed to:</strong> ${to}<br/>
+        <small style="color:#856404">Redirected — Resend free tier only delivers to verified email</small>
+      </div>
+      ${html}
+    `;
+
     try {
-      // RESEND FREE TIER WORKAROUND:
-      // If the user hasn't verified a custom domain on Resend, they can ONLY send emails to their own signup email.
-      // We will ALWAYS forward the email to the verifiedEmail, but note the original recipient inside the body so the alert isn't lost.
-      const originalTo = to;
-      const actualTo = this.verifiedEmail; // Force 'to' address to the verified testing sandbox
-      
-      const modifiedHtml = `
-        <div style="background-color: #ffebee; border: 1px solid #f44336; padding: 10px; margin-bottom: 20px; border-radius: 5px;">
-          <h4 style="color: #d32f2f; margin: 0 0 5px 0;">⚠️ ZoneRush Development Notice</h4>
-          <p style="margin: 0; font-size: 14px; color: #b71c1c;">
-            This email was originally addressed to: <strong>${originalTo}</strong><br/>
-            It was redirected to your verified testing email (${actualTo}) because a custom domain has not yet been verified on Resend.
-          </p>
-        </div>
-        ${html}
-      `;
+      const response = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          from: 'onboarding@resend.dev',
+          to: actualTo,
+          subject: redirectedSubject,
+          html: redirectedHtml,
+          text: text ? `[Originally to: ${to}]\n\n${text}` : undefined,
+        }),
+      });
 
-      const mailOptions = {
-        from: `"${from}" <onboarding@resend.dev>`,
-        to: actualTo,
-        subject: `[Dev Redirect: ${originalTo}] ${subject}`,
-        html: modifiedHtml,
-        text: `[Originally to: ${originalTo}]\n\n${text}`
-      };
+      if (!response.ok) {
+        const errBody = await response.text().catch(() => '');
+        throw new Error(`Resend API ${response.status}: ${errBody || response.statusText}`);
+      }
 
-      const info = await this.transporter.sendMail(mailOptions);
-      console.log(`✅ Email sent to ${to}`, info.messageId);
-      
-      return {
-        success: true,
-        messageId: info.messageId,
-        recipient: to
-      };
+      const result = await response.json();
+      console.log(`✅ Email sent to ${to} (via Resend HTTP API → ${actualTo})`, result.id);
+      return { success: true, messageId: result.id, recipient: to, forwardedTo: actualTo };
     } catch (error) {
       console.error(`❌ Email failed for ${to}:`, error.message);
       return { success: false, reason: error.message };

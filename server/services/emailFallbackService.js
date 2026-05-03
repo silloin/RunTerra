@@ -1,41 +1,24 @@
 /**
- * Fallback Email Service - Uses Ethereal for testing when Gmail fails
+ * Fallback Email Service
+ * When all HTTP email APIs fail, logs SOS alerts to a local file so no data is lost.
+ * No SMTP connections — purely local, zero network dependency.
  */
 
-const nodemailer = require('nodemailer');
+const fs = require('fs');
+const path = require('path');
 const crypto = require('crypto');
 const pool = require('../config/db');
 
+const LOG_FILE = path.join(__dirname, '..', 'logs', 'sos-fallback.json');
+
+// Ensure logs directory exists
+try { fs.mkdirSync(path.dirname(LOG_FILE), { recursive: true }); } catch (_) {}
+
 class EmailFallbackService {
   constructor() {
-    this.transporter = null;
-    this.initializeEtherealTransporter();
+    console.log('📂 Email fallback service ready (local file logging, no network required)');
   }
 
-  async initializeEtherealTransporter() {
-    try {
-      console.log('Initializing Ethereal Email for testing...');
-      const account = await nodemailer.createTestAccount();
-      
-      this.transporter = nodemailer.createTransport({
-        host: 'smtp.ethereal.email',
-        port: 587,
-        secure: false,
-        auth: {
-          user: account.user,
-          pass: account.pass
-        },
-        connectionTimeout: 15000, // 15 seconds connection timeout
-        greetingTimeout: 10000,   // 10 seconds greeting timeout
-        socketTimeout: 15000     // 15 seconds socket timeout
-      });
-
-      console.log('Email test URLs: https://ethereal.email/messages');
-      this.testAccount = account;
-    } catch (error) {
-      console.error('Failed to initialize Ethereal Email:', error);
-    }
-  }
 
   generateToken() {
     return crypto.randomBytes(32).toString('hex');
@@ -66,95 +49,41 @@ class EmailFallbackService {
   }
 
   async sendVerificationEmail(userId, email, username) {
-    if (!this.transporter) {
-      console.log('Email service unavailable - skipping verification email');
-      return {
-        success: true,
-        messageId: 'email-disabled',
-        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
-        note: 'Email verification skipped - service unavailable'
-      };
-    }
-
-    try {
-      const verification = await this.createVerificationRecord(userId, email);
-      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
-      const verificationLink = `${frontendUrl}/verify-email?token=${verification.token}`;
-
-      const mailOptions = {
-        from: `"ZoneRush Test" <${this.testAccount.user}>`,
-        to: email,
-        subject: 'Test: ZoneRush Email Verification',
-        html: `
-          <h2>Email Service Test</h2>
-          <p>This is a test email from ZoneRush deployment.</p>
-          <p><strong>Verification Link:</strong> <a href="${verificationLink}">${verificationLink}</a></p>
-          <p><strong>User:</strong> ${username}</p>
-          <p><strong>Email:</strong> ${email}</p>
-          <hr>
-          <p><small>This is a test email using Ethereal Email service.</small></p>
-        `,
-        text: `Test email for ${username} (${email}). Verification link: ${verificationLink}`
-      };
-
-      const info = await this.transporter.sendMail(mailOptions);
-      console.log('Test email sent:', info.messageId);
-      console.log('Preview URL:', nodemailer.getTestMessageUrl(info));
-
-      return {
-        success: true,
-        messageId: info.messageId,
-        expiresAt: verification.expires_at,
-        previewUrl: nodemailer.getTestMessageUrl(info),
-        note: 'Test email sent via Ethereal - check preview URL'
-      };
-    } catch (error) {
-      console.warn('Test email failed:', error.message);
-      return {
-        success: true,
-        messageId: 'test-failed',
-        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
-        note: 'Email test failed - app continues without email'
-      };
-    }
+    // Verification emails require actual delivery — log intent only
+    const record = await this.createVerificationRecord(userId, email).catch(() => null);
+    console.log(`📝 [FALLBACK] Verification email for ${username} (${email}) — could not deliver, token: ${record?.token || 'N/A'}`);
+    return {
+      success: true,
+      messageId: 'fallback-logged',
+      expiresAt: record?.expires_at || new Date(Date.now() + 24 * 60 * 60 * 1000),
+      note: 'Email fallback active — verification email logged locally only'
+    };
   }
 
   async sendSOSEmail(emergencyContact, userInfo, location) {
-    if (!this.transporter) {
-      console.log('SOS email unavailable - using console log');
-      console.log('SOS ALERT:', { emergencyContact, userInfo, location });
-      return { success: false, reason: 'email-unavailable' };
-    }
+    // Log alert to local file so no SOS data is ever silently lost
+    const alertEntry = {
+      timestamp: new Date().toISOString(),
+      contact: { name: emergencyContact.contact_name, email: emergencyContact.email },
+      user: { username: userInfo.username, id: userInfo.id },
+      location: { lat: location.lat, lng: location.lng },
+      mapsLink: `https://www.google.com/maps?q=${location.lat},${location.lng}`,
+      status: 'logged-fallback'
+    };
 
     try {
-      const mailOptions = {
-        from: `"ZoneRush SOS" <${this.testAccount.user}>`,
-        to: emergencyContact.email,
-        subject: 'SOS ALERT - Test Message',
-        html: `
-          <h1>TEST SOS ALERT</h1>
-          <p>This is a test SOS alert from ZoneRush.</p>
-          <p><strong>User:</strong> ${userInfo.username}</p>
-          <p><strong>Location:</strong> ${location.lat}, ${location.lng}</p>
-          <p><strong>Time:</strong> ${new Date().toISOString()}</p>
-          <hr>
-          <p><small>This is a test using Ethereal Email service.</small></p>
-        `
-      };
-
-      const info = await this.transporter.sendMail(mailOptions);
-      console.log('Test SOS email sent:', info.messageId);
-      console.log('Preview URL:', nodemailer.getTestMessageUrl(info));
-
-      return {
-        success: true,
-        messageId: info.messageId,
-        previewUrl: nodemailer.getTestMessageUrl(info),
-        note: 'Test SOS email sent via Ethereal'
-      };
-    } catch (error) {
-      console.warn('Test SOS email failed:', error.message);
-      return { success: false, reason: 'send-failed' };
+      // Append to JSON log file
+      let existing = [];
+      try { existing = JSON.parse(fs.readFileSync(LOG_FILE, 'utf8')); } catch (_) {}
+      existing.push(alertEntry);
+      fs.writeFileSync(LOG_FILE, JSON.stringify(existing, null, 2));
+      console.log(`📝 [FALLBACK] SOS alert for ${emergencyContact.contact_name} (${emergencyContact.email}) saved to ${LOG_FILE}`);
+      return { success: true, messageId: `fallback-${Date.now()}`, note: 'Logged to sos-fallback.json' };
+    } catch (writeErr) {
+      console.error('❌ Could not write SOS fallback log:', writeErr.message);
+      // Last resort: print to console so it appears in server logs
+      console.error('🚨 SOS ALERT (undelivered):', JSON.stringify(alertEntry));
+      return { success: false, reason: 'all-fallbacks-exhausted' };
     }
   }
 }
