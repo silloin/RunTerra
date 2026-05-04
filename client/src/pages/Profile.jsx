@@ -8,7 +8,7 @@ import { useTranslation } from 'react-i18next';
 
 const Profile = () => {
   const { t } = useTranslation();
-  const { user, loading: authLoading, logout, updateProfile, updateProfilePhoto, uploadProfilePhoto } = useContext(AuthContext);
+  const { user, logout, updateProfile, updateProfilePhoto, uploadProfilePhoto } = useContext(AuthContext);
   const [isEditing, setIsEditing] = useState(false);
   const [editData, setEditData] = useState({
     username: '',
@@ -230,18 +230,8 @@ const Profile = () => {
     { name: 'Explorer', icon: Award, description: 'Capture tiles in 3 different cities', achieved: false },
   ];
 
-  // Loading state while auth is initializing or user data is not available
-  if (authLoading || !user) {
-    return (
-      <div className="p-4 sm:p-8 pb-24 sm:pb-8 bg-gray-900 min-h-screen text-white flex items-center justify-center">
-        <div className="animate-pulse text-center">
-          <div className="w-24 h-24 bg-gray-700 rounded-full mx-auto mb-4"></div>
-          <div className="h-6 bg-gray-700 rounded w-48 mx-auto mb-2"></div>
-          <div className="h-4 bg-gray-700 rounded w-32 mx-auto"></div>
-        </div>
-      </div>
-    );
-  }
+  // Since ProtectedRoute guarantees user exists before rendering Profile,
+  // we do NOT need a loading guard here — it caused the first-render blank flash.
 
   return (
     <div className="p-4 sm:p-8 pb-24 sm:pb-8 bg-gray-900 min-h-screen text-white">

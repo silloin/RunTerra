@@ -56,6 +56,7 @@ const MapboxMap = () => {
   const currentDirection = useRef(null);
   const previousHeading = useRef(null);
   const startTime = useRef(null);
+  const isFollowingUserRef = useRef(true); // Ref to use inside watchPosition callback
   const [tiles, setTiles] = useState([]);
   const [showTracker, setShowTracker] = useState(false);
   const [showIntervals, setShowIntervals] = useState(false);
@@ -265,6 +266,10 @@ const MapboxMap = () => {
 
   const [locationLoading, setLocationLoading] = useState(false);
   const [currentLocation, setCurrentLocation] = useState(null);
+
+  useEffect(() => {
+    isFollowingUserRef.current = isFollowingUser;
+  }, [isFollowingUser]);
 
   useEffect(() => {
     if (map.current && currentLocation && isFollowingUser && isRunActive) {
@@ -739,8 +744,6 @@ const MapboxMap = () => {
                   displayHeading = calculatedHeading;
                   userHeading.current = calculatedHeading;
                   console.log('📍 Calculated heading from movement:', calculatedHeading.toFixed(1) + '°');
-                } else {
-                  console.log('⚠️ Not enough route points to calculate heading, liveRoute.length:', liveRoute.length);
                 }
               }
               
@@ -751,20 +754,21 @@ const MapboxMap = () => {
                   const svgElement = markerElement.querySelector('svg');
                   if (svgElement) {
                     svgElement.style.transform = `rotate(${displayHeading}deg)`;
-                    console.log('🔄 Arrow rotated to:', displayHeading.toFixed(1) + '°');
-                  } else {
-                    console.warn('⚠️ SVG element not found in marker');
                   }
-                } else {
-                  console.warn('⚠️ Marker element not found');
                 }
-              } else {
-                console.warn('⚠️ No heading available for rotation');
               }
             }
           }
           
-          if (map.current) map.current.flyTo({ center: coords, duration: 1000 });
+          // Update location states
+          setCurrentLocation(coords);
+          setCenter(coords);
+
+          // ONLY flyTo if following is enabled
+          if (map.current && isFollowingUserRef.current) {
+            map.current.flyTo({ center: coords, duration: 1000 });
+          }
+          
           setLocationError(null);
         },
         (error) => {
@@ -1864,14 +1868,12 @@ const MapboxMap = () => {
       )}
 
       {/* Following Status Indicator */}
-      {isRunActive && (
-        <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-gray-800 text-white text-xs px-3 py-1 rounded-full opacity-80 z-10">
-          Following: {isFollowingUser ? 'ON' : 'OFF'}
-        </div>
-      )}
+      <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-gray-800/80 backdrop-blur-sm text-white text-[10px] px-3 py-1 rounded-full z-10 border border-gray-700">
+        Follow Me: {isFollowingUser ? 'ON' : 'OFF'}
+      </div>
 
       {/* Recenter Button */}
-      {isRunActive && !isFollowingUser && (
+      {!isFollowingUser && (
         <button
           onClick={() => {
             setIsFollowingUser(true);
@@ -1879,8 +1881,9 @@ const MapboxMap = () => {
               map.current.flyTo({ center: currentLocation, zoom: 16, duration: 1000 });
             }
           }}
-          className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-blue-600 text-white px-4 py-2 rounded-full shadow-lg hover:bg-blue-700 transition-colors z-10"
+          className="absolute bottom-6 left-1/2 -translate-x-1/2 bg-blue-600 text-white px-6 py-2 rounded-full shadow-lg hover:bg-blue-700 transition-all z-10 font-bold flex items-center gap-2"
         >
+          <MapIcon size={16} />
           Recenter
         </button>
       )}

@@ -246,23 +246,9 @@ const validateUsername = (username) => {
 const validatePassword = (password) => {
   const validation = validateString(password, {
     required: true,
-    minLength: 8,
+    minLength: 6,
     maxLength: 128
   });
-
-  if (!validation.valid) return validation;
-
-  // Check complexity
-  const hasUppercase = /[A-Z]/.test(validation.value);
-  const hasLowercase = /[a-z]/.test(validation.value);
-  const hasNumber = /[0-9]/.test(validation.value);
-
-  if (!hasUppercase || !hasLowercase || !hasNumber) {
-    return {
-      valid: false,
-      error: 'Password must contain uppercase, lowercase, and number'
-    };
-  }
 
   return validation;
 };

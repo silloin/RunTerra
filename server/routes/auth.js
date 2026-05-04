@@ -167,15 +167,23 @@ router.post('/register',
       // Don't fail registration if email fails
     }
 
-    // Return token in response for cross-origin requests (Vercel → Render)
+    // Return token + full user profile (same as login)
+    const fullUserResult = await pool.query(
+      `SELECT 
+        id, username, email, city, bio, fitness_level,
+        profile_picture, xp, level, streak,
+        COALESCE(total_xp, 0) as "totalDistance",
+        COALESCE(territories_captured, 0) as "totalTiles",
+        COALESCE(total_territory_area, 0) as "weeklyMileage",
+        email_verified as "emailVerified"
+       FROM users WHERE id = $1`,
+      [newUser.rows[0].id]
+    );
+    const fullUser = fullUserResult.rows[0];
+
     res.json({ 
       token: token,
-      user: {
-        id: newUser.rows[0].id,
-        username: newUser.rows[0].username,
-        email: newUser.rows[0].email,
-        emailVerified: false
-      },
+      user: fullUser,
       msg: 'Registration successful. Please check your email to verify your account.'
     });
   } catch (err) {
@@ -377,15 +385,29 @@ router.post('/login',
       [userData.id, req.ip]
     );
 
-    // Return token in response for cross-origin requests (Vercel → Render)
+    // Return token + full user profile for cross-origin requests (Vercel → Render)
+    // Fetch full user data (same as /auth GET) so Profile page renders immediately
+    const fullUserResult = await pool.query(
+      `SELECT 
+        id, username, email, city, bio, fitness_level,
+        profile_picture, xp, level, streak,
+        COALESCE(total_xp, 0) as "totalDistance",
+        COALESCE(territories_captured, 0) as "totalTiles",
+        COALESCE(total_territory_area, 0) as "weeklyMileage",
+        email_verified as "emailVerified"
+       FROM users WHERE id = $1`,
+      [userData.id]
+    );
+    const fullUser = fullUserResult.rows[0];
+    
+    // Convert relative profile_picture URL to full URL if it exists
+    if (fullUser.profile_picture && fullUser.profile_picture.startsWith('/uploads/')) {
+      fullUser.profile_picture = `${req.protocol}://${req.get('host')}${fullUser.profile_picture}`;
+    }
+
     res.json({ 
       token: token,
-      user: {
-        id: userData.id,
-        username: userData.username,
-        email: userData.email,
-        emailVerified: userData.email_verified || false
-      }
+      user: fullUser
     });
   } catch (err) {
     console.error('Login error:', err.message);

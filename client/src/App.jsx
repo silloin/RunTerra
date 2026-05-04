@@ -1,4 +1,4 @@
-import React, { useContext, useMemo, useState, useEffect } from 'react';
+import React, { useContext, useState, useEffect } from 'react';
 import { Routes, Route, Navigate, useLocation, Link } from 'react-router-dom';
 import { AuthProvider, AuthContext } from './context/AuthContext';
 import { SocketProvider } from './context/SocketContext';
@@ -21,32 +21,25 @@ import ErrorBoundary from './components/ErrorBoundary';
 import { Menu } from 'lucide-react';
 import './App.css';
 
-// Optimized ProtectedRoute with React.memo to prevent unnecessary re-renders
-const ProtectedRoute = React.memo(({ children }) => {
+// ProtectedRoute: blocks children until auth is resolved
+const ProtectedRoute = ({ children }) => {
   const { user, loading } = useContext(AuthContext);
 
-  // Memoize the result to prevent re-renders
-  const result = useMemo(() => {
-    if (loading) {
-      return (
-        <div className="h-screen w-screen bg-gray-900 flex items-center justify-center text-white text-2xl font-bold">
-          🏃 Loading...
-        </div>
-      );
-    }
+  if (loading) {
+    return (
+      <div className="h-screen w-screen bg-gray-900 flex items-center justify-center text-white text-2xl font-bold">
+        🏃 Loading...
+      </div>
+    );
+  }
 
-    if (!user) {
-      console.warn('❌ No user found, redirecting to login');
-      return <Navigate to="/login" replace />;
-    }
+  if (!user) {
+    console.warn('❌ No user found, redirecting to login');
+    return <Navigate to="/login" replace />;
+  }
 
-    return children;
-  }, [user, loading, children]);
-
-  return result;
-});
-
-ProtectedRoute.displayName = 'ProtectedRoute';
+  return children;
+};
 
 const Layout = ({ children }) => {
   const { user } = useContext(AuthContext);
