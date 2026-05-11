@@ -9,17 +9,23 @@ class HeatmapService {
   // Process run and update heatmap
   async processRunForHeatmap(runId) {
     try {
-      // Get route points
+      // Extract numeric ID from string format like "run-1778500990444"
+      let numericRunId = typeof runId === 'string' ? runId.replace('run-', '') : runId;
+      
+      // Convert to BigInt to handle large timestamp values
+      numericRunId = BigInt(numericRunId).toString();
+      
+      // Get route points - cast run_id to BIGINT for comparison
       const pointsQuery = `
         SELECT 
           ST_X(location::geometry) as lng,
           ST_Y(location::geometry) as lat
         FROM route_points
-        WHERE run_id = $1
+        WHERE run_id::bigint = $1::bigint
         ORDER BY sequence_order
       `;
       
-      const result = await pool.query(pointsQuery, [runId]);
+      const result = await pool.query(pointsQuery, [numericRunId]);
       const points = result.rows;
       
       if (points.length === 0) return;

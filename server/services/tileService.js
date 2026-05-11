@@ -3,7 +3,7 @@ const pool = require('../config/db');
 
 class TileService {
   constructor() {
-    this.TILE_PRECISION = 8; // ~38m x 19m tiles
+    this.TILE_PRECISION = 7; // ~153m x 153m tiles - reduced for better coverage on short runs
   }
 
   // Generate geohash for a coordinate
@@ -67,9 +67,17 @@ class TileService {
       // Use SELECT FOR UPDATE to prevent race conditions during concurrent captures
       await client.query('SELECT * FROM tiles WHERE id = $1 FOR UPDATE', [tile.id]);
       
+      // Extract numeric ID from string format like "run-1778500990444"
+      let numericRunId = runId;
+      if (typeof runId === 'string') {
+        numericRunId = runId.replace('run-', '');
+      }
+      // Convert to BigInt string to handle large values, or null if not provided
+      numericRunId = numericRunId ? BigInt(numericRunId).toString() : null;
+      
       const captureQuery = `
         INSERT INTO captured_tiles (tile_id, user_id, run_id, capture_count, first_captured_at, last_captured_at)
-        VALUES ($1, $2, $3, 1, NOW(), NOW())
+        VALUES ($1, $2, $3::bigint, 1, NOW(), NOW())
         ON CONFLICT (tile_id, user_id) DO UPDATE SET
           capture_count = captured_tiles.capture_count + 1,
           last_captured_at = NOW(),
@@ -77,7 +85,7 @@ class TileService {
         RETURNING *, (xmax = 0) as is_new_capture
       `;
       
-      const result = await client.query(captureQuery, [tile.id, userId, runId]);
+      const result = await client.query(captureQuery, [tile.id, userId, numericRunId]);
       const isNew = result.rows[0].is_new_capture;
       
       if (isNew) {
@@ -105,9 +113,12 @@ class TileService {
   async getUserCapturedTiles(currentUserId) {
     const query = `
       SELECT t.geohash, ct.user_id,
-             ct.user_id = $1 as is_mine
+             ct.user_id = $1 as is_mine,
+             t.geometry,
+             t.center_point
       FROM tiles t
       JOIN captured_tiles ct ON t.id = ct.tile_id
+      WHERE ct.user_id = $1
       ORDER BY ct.last_captured_at DESC
     `;
     const result = await pool.query(query, [currentUserId]);
@@ -143,6 +154,24 @@ class TileService {
     const uniqueGeohashes = new Set();
 
     console.log(`🗺️ Processing route for tile capture: ${routePoints.length} points`);
+
+    // Ensure at least the first point is captured for very short runs
+    if (routePoints.length > 0) {
+      const firstPoint = routePoints[0];
+      const firstGeohash = this.generateGeohash(firstPoint.lat, firstPoint.lng);
+      
+      console.log(`📍 Capturing starting tile: ${firstGeohash} at (${firstPoint.lat}, ${firstPoint.lng})`);
+      const result = await this.captureTile(userId, firstPoint.lat, firstPoint.lng, runId);
+      
+      if (result.isNew) {
+        console.log(`✅ New tile captured: ${firstGeohash}`);
+        capturedTiles.push(result.tile);
+      } else {
+        console.log(`ℹ️  Tile already owned, incremented capture count: ${firstGeohash}`);
+      }
+      
+      uniqueGeohashes.add(firstGeohash);
+    }
 
     for (const point of routePoints) {
       const geohash = this.generateGeohash(point.lat, point.lng);

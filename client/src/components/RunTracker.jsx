@@ -399,23 +399,51 @@ const RunTracker = ({
       console.log('💾 Saving run to database...', runData.distance, 'km');
       const runRes = await axios.post('/runs', runData);
       console.log('✅ Run saved successfully:', runRes.data);
-      
+
       // Stop tracking AFTER successful save
       setIsTracking(false);
       clearLocalStorageSession();
       setGpsStatus('idle');
       setIsSaving(false);
-      
+
       if (onRunComplete) onRunComplete();
     } catch (err) {
       console.error('Error saving run:', err);
       console.error('Error details:', err.response?.data);
-      
+
       const errorMsg = err.response?.data?.message || err.response?.data?.error || err.message;
-      alert(`Error saving run: ${errorMsg}`);
-      
-      // Reset saving state but don't stop tracking if it failed
-      setIsSaving(false);
+
+      // If network error, save to offline queue
+      if (!err.response || err.message === 'Network Error' || err.code === 'ECONNABORTED') {
+        console.warn('📡 Network error detected - saving run to offline queue');
+
+        try {
+          const pendingRuns = JSON.parse(localStorage.getItem('pending_runs')) || [];
+          pendingRuns.push({
+            runData,
+            savedAt: new Date().toISOString(),
+            id: `run_${Date.now()}`
+          });
+          localStorage.setItem('pending_runs', JSON.stringify(pendingRuns));
+
+          alert(`📍 Run saved offline (${pendingRuns.length} pending).\n\nYour tiles will sync when network is restored.`);
+
+          // Stop tracking even though offline
+          setIsTracking(false);
+          clearLocalStorageSession();
+          setGpsStatus('idle');
+          setIsSaving(false);
+
+          if (onRunComplete) onRunComplete();
+        } catch (storageErr) {
+          console.error('Error saving to offline queue:', storageErr);
+          alert(`Error saving offline: ${storageErr.message}`);
+          setIsSaving(false);
+        }
+      } else {
+        alert(`Error saving run: ${errorMsg}`);
+        setIsSaving(false);
+      }
     }
   };
 

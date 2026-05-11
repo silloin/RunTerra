@@ -24,8 +24,17 @@ const createArrowMarker = (rotation = 0) => {
   el.style.display = 'flex';
   el.style.alignItems = 'center';
   el.style.justifyContent = 'center';
-  el.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 24 24" fill="#4285F4" stroke="white" stroke-width="1.5" style="transform: rotate(${rotation}deg); filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3));"><polygon points="12,2 22,22 12,16 2,22"/></svg>`;
+  el.style.transformOrigin = 'center center';
+  el.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 24 24" fill="#4285F4" stroke="white" stroke-width="1.5" style="transform-origin: center center; transition: transform 0.1s linear; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3));"><polygon points="12,2 22,22 12,16 2,22"/></svg>`;
   el.style.cursor = 'pointer';
+  el.dataset.rotation = rotation;
+
+  // Set initial rotation on the SVG
+  const svg = el.querySelector('svg');
+  if (svg) {
+    svg.style.transform = `rotate(${rotation}deg)`;
+  }
+
   return el;
 };
 
@@ -84,9 +93,13 @@ const MapboxMap = () => {
 
   // Toggle tiles visibility
   const toggleTiles = () => {
-    setShowTiles(!showTiles);
+    const newShowTiles = !showTiles;
+    setShowTiles(newShowTiles);
     if (map.current) {
-      const visibility = showTiles ? 'none' : 'visible';
+      const visibility = newShowTiles ? 'visible' : 'none';
+      if (map.current.getLayer('tiles-layer')) {
+        map.current.setLayoutProperty('tiles-layer', 'visibility', visibility);
+      }
       if (map.current.getLayer('territories-layer')) {
         map.current.setLayoutProperty('territories-layer', 'visibility', visibility);
       }
@@ -486,6 +499,8 @@ const MapboxMap = () => {
           socket.current.emit('get-online-users');
           fetchNearbyRunners();
         }, 500);
+        // Sync any pending offline runs
+        syncPendingRuns();
       }
     });
 
@@ -769,6 +784,8 @@ const MapboxMap = () => {
                   const svgElement = markerElement.querySelector('svg');
                   if (svgElement) {
                     svgElement.style.transform = `rotate(${displayHeading}deg)`;
+                    svgElement.style.transformOrigin = 'center center';
+                    markerElement.dataset.rotation = displayHeading;
                   }
                 }
               }
@@ -1324,26 +1341,34 @@ const MapboxMap = () => {
 
     console.log('🎨 Rendering', tilesData.length, 'tiles on map');
 
-    const features = tilesData.map(tile => {
-      const coords = ngeohash.decode(tile.geohash);
-      const isMine = tile.is_mine === true || tile.is_mine === 'true';
-      return {
-        type: 'Feature',
-        properties: { color: isMine ? '#22c55e' : '#ef4444' },
-        geometry: {
-          type: 'Polygon',
-          coordinates: [[
-            [coords.longitude - 0.0005, coords.latitude - 0.0005],
-            [coords.longitude + 0.0005, coords.latitude - 0.0005],
-            [coords.longitude + 0.0005, coords.latitude + 0.0005],
-            [coords.longitude - 0.0005, coords.latitude + 0.0005],
-            [coords.longitude - 0.0005, coords.latitude - 0.0005]
-          ]]
+    const features = tilesData
+      .filter(tile => tile && tile.geohash) // Filter out invalid tiles
+      .map(tile => {
+        try {
+          const coords = ngeohash.decode(tile.geohash);
+          const isMine = tile.is_mine === true || tile.is_mine === 'true';
+          return {
+            type: 'Feature',
+            properties: { color: isMine ? '#22c55e' : '#ef4444' },
+            geometry: {
+              type: 'Polygon',
+              coordinates: [[
+                [coords.longitude - 0.0005, coords.latitude - 0.0005],
+                [coords.longitude + 0.0005, coords.latitude - 0.0005],
+                [coords.longitude + 0.0005, coords.latitude + 0.0005],
+                [coords.longitude - 0.0005, coords.latitude + 0.0005],
+                [coords.longitude - 0.0005, coords.latitude - 0.0005]
+              ]]
+            }
+          };
+        } catch (err) {
+          console.warn('⚠️ Failed to decode tile geohash:', tile.geohash, err.message);
+          return null;
         }
-      };
-    });
+      })
+      .filter(feature => feature !== null); // Remove null features
 
-    console.log('📊 Created', features.length, 'tile features');
+    console.log('📊 Created', features.length, 'valid tile features');
 
     map.current.addSource('tiles', {
       type: 'geojson',
@@ -1354,6 +1379,9 @@ const MapboxMap = () => {
       id: 'tiles-layer',
       type: 'fill',
       source: 'tiles',
+      layout: {
+        'visibility': showTiles ? 'visible' : 'none'
+      },
       paint: {
         'fill-color': ['get', 'color'],
         'fill-opacity': 0.4,
@@ -1384,6 +1412,9 @@ const MapboxMap = () => {
             id: 'territories-layer',
             type: 'fill',
             source: 'territories',
+            layout: {
+              'visibility': showTiles ? 'visible' : 'none'
+            },
             paint: {
               'fill-color': '#00ff00',
               'fill-opacity': 0.3
@@ -1394,6 +1425,9 @@ const MapboxMap = () => {
             id: 'territories-outline',
             type: 'line',
             source: 'territories',
+            layout: {
+              'visibility': showTiles ? 'visible' : 'none'
+            },
             paint: {
               'line-color': '#00ff00',
               'line-width': 2
@@ -1403,6 +1437,48 @@ const MapboxMap = () => {
       }
     } catch (err) {
       // Silently ignore
+    }
+  };
+
+  const syncPendingRuns = async () => {
+    try {
+      const pendingRuns = JSON.parse(localStorage.getItem('pending_runs')) || [];
+      if (pendingRuns.length === 0) return;
+
+      console.log(`📡 Syncing ${pendingRuns.length} pending offline runs...`);
+      const token = localStorage.getItem('token');
+      let successCount = 0;
+      let failedRuns = [];
+
+      for (const pending of pendingRuns) {
+        try {
+          await axios.post('/runs', pending.runData, {
+            headers: { 'x-auth-token': token }
+          });
+          successCount++;
+          console.log(`✅ Synced offline run: ${pending.id}`);
+        } catch (err) {
+          console.error(`Failed to sync run ${pending.id}:`, err.message);
+          failedRuns.push(pending);
+        }
+      }
+
+      // Update localStorage with only failed runs
+      if (failedRuns.length > 0) {
+        localStorage.setItem('pending_runs', JSON.stringify(failedRuns));
+        console.warn(`⚠️ ${failedRuns.length} runs still pending`);
+      } else {
+        localStorage.removeItem('pending_runs');
+        console.log('✅ All offline runs synced successfully!');
+      }
+
+      // Refresh tiles after syncing
+      if (successCount > 0) {
+        fetchTiles();
+        alert(`✅ Synced ${successCount} offline run(s)!`);
+      }
+    } catch (err) {
+      console.error('Error syncing pending runs:', err);
     }
   };
 
