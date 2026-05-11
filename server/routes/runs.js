@@ -216,16 +216,32 @@ router.post('/', authenticateToken, antiCheatMiddleware, async (req, res) => {
     }
     
     // Create LineString from route points - filter out duplicate consecutive points
+    // Frontend sends {lat, lng}, convert to {lng, lat} for GeoJSON
     const uniquePoints = [];
     for (let i = 0; i < route_points.length; i++) {
       const p = route_points[i];
-      // Ensure p has lng and lat and they are numbers
-      if (typeof p.lng !== 'number' || typeof p.lat !== 'number') continue;
-      
-      if (uniquePoints.length === 0 || 
-          p.lng !== uniquePoints[uniquePoints.length - 1].lng || 
-          p.lat !== uniquePoints[uniquePoints.length - 1].lat) {
-        uniquePoints.push(p);
+
+      // Handle both formats: {lat, lng} and {lng, lat}
+      let lng, lat;
+      if (p.lng !== undefined && p.lat !== undefined) {
+        // Standard format: {lat, lng}
+        lng = parseFloat(p.lng);
+        lat = parseFloat(p.lat);
+      } else if (p[0] !== undefined && p[1] !== undefined) {
+        // Array format: [lng, lat]
+        lng = parseFloat(p[0]);
+        lat = parseFloat(p[1]);
+      } else {
+        continue;
+      }
+
+      // Validate coordinates are proper numbers
+      if (typeof lng !== 'number' || typeof lat !== 'number' || isNaN(lng) || isNaN(lat)) continue;
+
+      if (uniquePoints.length === 0 ||
+          lng !== uniquePoints[uniquePoints.length - 1].lng ||
+          lat !== uniquePoints[uniquePoints.length - 1].lat) {
+        uniquePoints.push({ lng, lat });
       }
     }
 
@@ -273,21 +289,37 @@ router.post('/', authenticateToken, antiCheatMiddleware, async (req, res) => {
     
     // Insert route points
     for (let i = 0; i < route_points.length; i++) {
-      const point = route_points[i];
+      const p = route_points[i];
+
+      // Handle both formats: {lat, lng} and {lng, lat}
+      let lng, lat;
+      if (p.lng !== undefined && p.lat !== undefined) {
+        lng = parseFloat(p.lng);
+        lat = parseFloat(p.lat);
+      } else if (p[0] !== undefined && p[1] !== undefined) {
+        lng = parseFloat(p[0]);
+        lat = parseFloat(p[1]);
+      } else {
+        continue;
+      }
+
+      // Validate coordinates
+      if (typeof lng !== 'number' || typeof lat !== 'number' || isNaN(lng) || isNaN(lat)) continue;
+
       const pointQuery = `
-        INSERT INTO route_points 
+        INSERT INTO route_points
         (run_id, location, altitude, speed, heading, accuracy, recorded_at, sequence_order)
         VALUES ($1, ST_GeomFromText($2, 4326), $3, $4, $5, $6, $7, $8)
       `;
-      
+
       await client.query(pointQuery, [
         run.id,
-        `POINT(${point.lng} ${point.lat})`,
-        point.altitude || null,
-        point.speed || null,
-        point.heading || null,
-        point.accuracy || null,
-        point.timestamp || new Date(),
+        `POINT(${lng} ${lat})`,
+        p.altitude || null,
+        p.speed || null,
+        p.heading || null,
+        p.accuracy || null,
+        p.timestamp || new Date(),
         i
       ]);
     }
