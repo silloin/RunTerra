@@ -3,7 +3,7 @@ const pool = require('../config/db');
 
 class TileService {
   constructor() {
-    this.TILE_PRECISION = 7; // ~153m x 153m tiles - reduced for better coverage on short runs
+    this.TILE_PRECISION = 9; // ~19m x 19m tiles - smaller tiles for more granular territory control
   }
 
   // Generate geohash for a coordinate

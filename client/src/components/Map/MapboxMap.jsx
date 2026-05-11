@@ -1383,7 +1383,8 @@ const MapboxMap = () => {
       .filter(tile => tile && tile.geohash) // Filter out invalid tiles
       .map(tile => {
         try {
-          const coords = ngeohash.decode(tile.geohash);
+          const bbox = ngeohash.decode_bbox(tile.geohash);
+          const [minLat, minLng, maxLat, maxLng] = bbox;
           const isMine = tile.is_mine === true || tile.is_mine === 'true';
           return {
             type: 'Feature',
@@ -1391,11 +1392,11 @@ const MapboxMap = () => {
             geometry: {
               type: 'Polygon',
               coordinates: [[
-                [coords.longitude - 0.0005, coords.latitude - 0.0005],
-                [coords.longitude + 0.0005, coords.latitude - 0.0005],
-                [coords.longitude + 0.0005, coords.latitude + 0.0005],
-                [coords.longitude - 0.0005, coords.latitude + 0.0005],
-                [coords.longitude - 0.0005, coords.latitude - 0.0005]
+                [minLng, minLat],
+                [maxLng, minLat],
+                [maxLng, maxLat],
+                [minLng, maxLat],
+                [minLng, minLat]
               ]]
             }
           };
