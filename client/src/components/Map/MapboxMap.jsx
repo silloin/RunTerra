@@ -85,6 +85,12 @@ const MapboxMap = () => {
   const [directionsData, setDirectionsData] = useState(null);
   const [selectedMode, setSelectedMode] = useState('driving');
   const [showTiles, setShowTiles] = useState(true);
+  const showTilesRef = useRef(true); // Ref to access current value in socket handlers
+  
+  // Keep ref in sync with state
+  useEffect(() => {
+    showTilesRef.current = showTiles;
+  }, [showTiles]);
 
   // Toggle directions panel
   const toggleDirectionsPanel = () => {
@@ -614,13 +620,15 @@ const MapboxMap = () => {
         username: runner.username
       }));
       setOnlineUsers(newOnlineUsers);
-      console.log('👥 Online users updated:', newOnlineUsers.length, '+ 1 (you) =', newOnlineUsers.length + 1);
+      console.log(' Online users updated:', newOnlineUsers.length, '+ 1 (you) =', newOnlineUsers.length + 1);
     });
 
     socket.current.on('territory-updated', (data) => {
       console.log('Territory updated:', data);
-      // Refresh tiles immediately
-      fetchTiles();
+      // Only refresh tiles if they are visible (use ref for current value)
+      if (showTilesRef.current) {
+        fetchTiles();
+      }
       // Also refresh heatmap if visible
       if (showHeatmap) {
         fetchHeatmapData();
@@ -629,11 +637,14 @@ const MapboxMap = () => {
 
     socket.current.on('territory-stolen', (data) => {
       console.log('Territory stolen:', data);
+      // Show notification to user
       if (data.defenderId === user?.id) {
         alert(`Your territory was stolen by ${data.attackerId}!`);
       }
-      // Refresh tiles immediately
-      fetchTiles();
+      // Only refresh tiles if they are visible (use ref for current value)
+      if (showTilesRef.current) {
+        fetchTiles();
+      }
       // Also refresh heatmap if visible
       if (showHeatmap) {
         fetchHeatmapData();
@@ -662,8 +673,10 @@ const MapboxMap = () => {
     });
 
     socket.current.on('tile-captured', (data) => {
-      // Refresh tiles immediately
-      fetchTiles();
+      // Only refresh tiles if they are visible (use ref for current value)
+      if (showTilesRef.current) {
+        fetchTiles();
+      }
       // Also refresh heatmap if visible
       if (showHeatmap) {
         fetchHeatmapData();
@@ -674,8 +687,10 @@ const MapboxMap = () => {
     // Listen for other users' tile captures
     socket.current.on('tile-captured-global', (data) => {
       console.log('🌍 Another user captured a tile:', data);
-      // Refresh tiles to show updated ownership
-      fetchTiles();
+      // Only refresh tiles if they are visible (use ref for current value)
+      if (showTilesRef.current) {
+        fetchTiles();
+      }
       // Also refresh heatmap if visible
       if (showHeatmap) {
         fetchHeatmapData();
@@ -914,14 +929,17 @@ const MapboxMap = () => {
     return () => clearInterval(interval);
   }, [showHeatmap]);
 
-  // Auto-refresh tiles every 15 seconds
+  // Auto-refresh tiles every 15 seconds (only when tiles are visible)
   useEffect(() => {
     const interval = setInterval(() => {
-      fetchTiles();
+      // Use ref to check current state
+      if (showTilesRef.current) {
+        fetchTiles();
+      }
     }, 15000); // Refresh every 15 seconds
     
     return () => clearInterval(interval);
-  }, []);
+  }, []); // Empty dependency array - ref always has current value
 
   // Auto-refresh nearby runners every 30 seconds
   useEffect(() => {
@@ -1338,6 +1356,15 @@ const MapboxMap = () => {
   const renderTiles = (tilesData) => {
     if (!map.current) {
       console.warn('⚠️ Cannot render tiles: map not initialized');
+      return;
+    }
+
+    // If tiles are toggled off, just remove existing tiles and don't render new ones
+    // Use ref to get current value since this function may be called from various contexts
+    if (!showTilesRef.current) {
+      if (map.current.getLayer('tiles-layer')) map.current.removeLayer('tiles-layer');
+      if (map.current.getSource('tiles')) map.current.removeSource('tiles');
+      console.log('🙈 Tiles are toggled off, not rendering');
       return;
     }
 
