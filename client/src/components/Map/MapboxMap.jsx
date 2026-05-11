@@ -319,12 +319,78 @@ const MapboxMap = () => {
     if (map.current) return;
 
     setLocationLoading(true);
+    
+    // Try to get saved location from localStorage first
+    const savedLocation = localStorage.getItem('lastKnownLocation');
+    let initialCoords = null;
+    
+    if (savedLocation) {
+      try {
+        const parsed = JSON.parse(savedLocation);
+        const savedTime = parsed.timestamp || 0;
+        const currentTime = Date.now();
+        const age = currentTime - savedTime;
+        
+        // Use saved location if it's less than 24 hours old
+        if (age < 24 * 60 * 60 * 1000 && parsed.coords) {
+          initialCoords = parsed.coords;
+          console.log('📍 Using saved location from localStorage:', initialCoords);
+          setCenter(initialCoords);
+          setCurrentLocation(initialCoords);
+          initializeMap(initialCoords);
+          setLocationLoading(false);
+        }
+      } catch (e) {
+        console.warn('Failed to parse saved location:', e);
+      }
+    }
+    
+    // Always try to get fresh location for accuracy
     navigator.geolocation.getCurrentPosition(
       (position) => {
         const coords = [position.coords.longitude, position.coords.latitude];
-        setCenter(coords);
-        setCurrentLocation(coords);
-        initializeMap(coords);
+        const accuracy = position.coords.accuracy;
+        
+        console.log('📍 Fresh location obtained:', coords, 'Accuracy:', accuracy, 'meters');
+        
+        // Save to localStorage for next session
+        localStorage.setItem('lastKnownLocation', JSON.stringify({
+          coords: coords,
+          timestamp: Date.now(),
+          accuracy: accuracy
+        }));
+        
+        // Only update if accuracy is good (< 100m) or we don't have an initial position
+        if (accuracy < 100 || !initialCoords) {
+          setCenter(coords);
+          setCurrentLocation(coords);
+          
+          // If map already initialized with saved location, update it
+          if (map.current && initialCoords) {
+            // Calculate distance between saved and new location
+            const distance = calculateDistance(initialCoords[1], initialCoords[0], coords[1], coords[0]);
+            console.log('📏 Distance from saved location:', distance.toFixed(2), 'km');
+            
+            // Only jump if significant difference (> 100m)
+            if (distance > 0.1) {
+              console.log('🔄 Location changed significantly, updating map');
+              map.current.flyTo({
+                center: coords,
+                zoom: 15,
+                duration: 1500
+              });
+              if (userMarker.current) {
+                userMarker.current.setLngLat(coords);
+              }
+            }
+          } else if (!initialCoords) {
+            // No saved location, use fresh location
+            initializeMap(coords);
+          }
+        } else {
+          console.log('⚠️ Low accuracy location ignored (>100m)');
+        }
+        
         setLocationLoading(false);
       },
       (error) => {
@@ -339,15 +405,19 @@ const MapboxMap = () => {
         console.warn('Geolocation error:', errorMessage, error.message);
         setLocationLoading(false);
         setLocationError(errorMessage);
-        const fallback = [55.2708, 25.2048];
-        setCenter(fallback);
-        setCurrentLocation(fallback);
-        initializeMap(fallback);
+        
+        // Only use fallback if we don't have a saved location
+        if (!initialCoords) {
+          const fallback = [55.2708, 25.2048];
+          setCenter(fallback);
+          setCurrentLocation(fallback);
+          initializeMap(fallback);
+        }
       },
       {
         enableHighAccuracy: true,
-        timeout: 10000, // 10 second timeout
-        maximumAge: 300000 // Accept cached location up to 5 minutes old
+        timeout: 15000, // 15 second timeout
+        maximumAge: 60000 // Accept cached location up to 1 minute old
       }
     );
   }, []);
@@ -479,6 +549,19 @@ const MapboxMap = () => {
     bearing = (bearing + 360) % 360; // Normalize to 0-360
     
     return bearing;
+  };
+
+  // Calculate distance between two coordinates in km (Haversine formula)
+  const calculateDistance = (lat1, lng1, lat2, lng2) => {
+    const toRad = (deg) => deg * Math.PI / 180;
+    const R = 6371; // Earth's radius in km
+    const dLat = toRad(lat2 - lat1);
+    const dLng = toRad(lng2 - lng1);
+    const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+              Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+              Math.sin(dLng / 2) * Math.sin(dLng / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
   };
 
     const reconnectSocket = () => {
