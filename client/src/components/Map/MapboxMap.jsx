@@ -671,6 +671,17 @@ const MapboxMap = () => {
       // Optional: Show toast notification for new tile
     });
 
+    // Listen for other users' tile captures
+    socket.current.on('tile-captured-global', (data) => {
+      console.log('🌍 Another user captured a tile:', data);
+      // Refresh tiles to show updated ownership
+      fetchTiles();
+      // Also refresh heatmap if visible
+      if (showHeatmap) {
+        fetchHeatmapData();
+      }
+    });
+
     socket.current.on('achievements-unlocked', (achievements) => {
       // Optional: Show achievement notification
     });

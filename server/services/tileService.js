@@ -75,6 +75,12 @@ class TileService {
       // Convert to BigInt string to handle large values, or null if not provided
       numericRunId = numericRunId ? BigInt(numericRunId).toString() : null;
       
+      // First, update any existing records to ensure this capture becomes the most recent
+      await client.query(
+        'UPDATE captured_tiles SET last_captured_at = NOW() WHERE tile_id = $1 AND user_id = $2',
+        [tile.id, userId]
+      );
+      
       const captureQuery = `
         INSERT INTO captured_tiles (tile_id, user_id, run_id, capture_count, first_captured_at, last_captured_at)
         VALUES ($1, $2, $3::bigint, 1, NOW(), NOW())
@@ -86,6 +92,14 @@ class TileService {
       `;
       
       const result = await client.query(captureQuery, [tile.id, userId, numericRunId]);
+      
+      // If there's a different owner, we should mark their capture as older
+      if (hasDifferentOwner && previousOwner) {
+        await client.query(
+          'UPDATE captured_tiles SET last_captured_at = NOW() - INTERVAL \'1 second\' WHERE tile_id = $1 AND user_id = $2 AND user_id != $3',
+          [tile.id, previousOwner.user_id, userId]
+        );
+      }
       const isNew = result.rows[0].is_new_capture;
       
       if (isNew) {
@@ -111,14 +125,21 @@ class TileService {
   }
 
   async getUserCapturedTiles(currentUserId) {
+    // Get the most recent capture for each tile (to show current owner)
     const query = `
       SELECT t.geohash, ct.user_id,
              ct.user_id = $1 as is_mine,
              t.geometry,
-             t.center_point
+             t.center_point,
+             u.username as owner_username
       FROM tiles t
       JOIN captured_tiles ct ON t.id = ct.tile_id
-      WHERE ct.user_id = $1
+      JOIN users u ON ct.user_id = u.id
+      WHERE ct.last_captured_at = (
+        SELECT MAX(last_captured_at) 
+        FROM captured_tiles 
+        WHERE tile_id = t.id
+      )
       ORDER BY ct.last_captured_at DESC
     `;
     const result = await pool.query(query, [currentUserId]);
