@@ -75,10 +75,21 @@ const MapboxMap = () => {
   const [showDirectionsPanel, setShowDirectionsPanel] = useState(false);
   const [directionsData, setDirectionsData] = useState(null);
   const [selectedMode, setSelectedMode] = useState('driving');
+  const [showTiles, setShowTiles] = useState(true);
 
   // Toggle directions panel
   const toggleDirectionsPanel = () => {
     setShowDirectionsPanel(!showDirectionsPanel);
+  };
+
+  // Toggle tiles visibility
+  const toggleTiles = () => {
+    setShowTiles(!showTiles);
+    if (map.current) {
+      const visibility = showTiles ? 'none' : 'visible';
+      map.current.setLayoutProperty('territories-layer', 'visibility', visibility);
+      map.current.setLayoutProperty('territories-outline', 'visibility', visibility);
+    }
   };
 
   // Calculate route with directions data
@@ -1631,13 +1642,13 @@ const MapboxMap = () => {
             </button>
 
             <button
-              onClick={() => { 
-                fetchTerritories(); 
-                setIsMenuOpen(false); 
+              onClick={() => {
+                toggleTiles();
+                setIsMenuOpen(false);
               }}
-              className="bg-yellow-600 text-white px-3 py-3 rounded-lg font-bold shadow-lg hover:bg-yellow-700 transition text-sm"
+              className={`text-white px-3 py-3 rounded-lg font-bold shadow-lg transition text-sm ${showTiles ? 'bg-purple-600 hover:bg-purple-700' : 'bg-gray-500 hover:bg-gray-600'}`}
             >
-              🔄 Refresh Tiles
+              {showTiles ? '📍 Tiles On' : '📍 Tiles Off'}
             </button>
 
             {!isSocketConnected && (
@@ -1786,10 +1797,10 @@ const MapboxMap = () => {
             </button>
             
             <button
-              onClick={fetchTerritories}
-              className="bg-yellow-600 text-white px-3 py-2 rounded-lg font-bold shadow-lg hover:bg-yellow-700 transition text-sm"
+              onClick={toggleTiles}
+              className={`text-white px-3 py-2 rounded-lg font-bold shadow-lg transition text-sm ${showTiles ? 'bg-purple-600 hover:bg-purple-700' : 'bg-gray-500 hover:bg-gray-600'}`}
             >
-              🔄 Refresh Tiles
+              {showTiles ? '📍 Tiles On' : '📍 Tiles Off'}
             </button>
           </div>
         </div>
