@@ -87,8 +87,12 @@ const MapboxMap = () => {
     setShowTiles(!showTiles);
     if (map.current) {
       const visibility = showTiles ? 'none' : 'visible';
-      map.current.setLayoutProperty('territories-layer', 'visibility', visibility);
-      map.current.setLayoutProperty('territories-outline', 'visibility', visibility);
+      if (map.current.getLayer('territories-layer')) {
+        map.current.setLayoutProperty('territories-layer', 'visibility', visibility);
+      }
+      if (map.current.getLayer('territories-outline')) {
+        map.current.setLayoutProperty('territories-outline', 'visibility', visibility);
+      }
     }
   };
 
